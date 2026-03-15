@@ -1,12 +1,13 @@
 {
   "name": "marketbot",
   "version": "1.0.0",
-  "description": "Discord bot simples",
+  "description": "Discord bot com IA",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.18.0"
+    "discord.js": "^14.18.0",
+    "openai": "^4.56.0"
   }
 }
