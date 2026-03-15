@@ -1,16 +1,16 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const OpenAI = require("openai");
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+    GatewayIntentBits.MessageContent
+  ]
+});
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
 });
 
 client.once("ready", () => {
@@ -18,45 +18,51 @@ client.once("ready", () => {
 });
 
 client.on("messageCreate", async (message) => {
-
-  if (message.author.bot) return;
-
   try {
+    if (message.author.bot) return;
 
-    const response = await openai.chat.completions.create({
+    // Só responde se o bot for mencionado
+    if (!message.mentions.has(client.user)) return;
+
+    // Remove a menção do texto
+    const userMessage = message.content.replace(/<@!?\d+>/g, "").trim();
+
+    if (!userMessage) {
+      await message.reply("Diz-me o que queres que eu faça.");
+      return;
+    }
+
+    const completion = await openai.chat.completions.create({
       model: "gpt-4.1-mini",
       messages: [
         {
           role: "system",
-          content: `
-Tu és um assistente de análise de negócios.
-Ajuda a encontrar:
-- produtos virais
+          content: `Tu és um assistente prático de negócios para Discord.
+Responde em português de Portugal.
+Sê claro, direto e útil.
+Ajuda com:
+- produtos em tendência
 - fornecedores
-- tendências de mercado
-- ideias para vender em vending ou pastelaria
+- preços de mercado
+- concorrentes
+- ideias para vending, pastelaria e revenda
 
-Responde sempre de forma curta e estruturada.
-          `,
+Responde de forma estruturada e simples.`
         },
         {
           role: "user",
-          content: message.content,
-        },
-      ],
+          content: userMessage
+        }
+      ]
     });
 
-    const reply = response.choices[0].message.content;
+    const reply = completion.choices[0].message.content || "Não consegui gerar resposta.";
 
-    message.reply(reply);
-
+    await message.reply(reply);
   } catch (error) {
-
-    console.error(error);
-    message.reply("Erro ao contactar a IA.");
-
+    console.error("Erro OpenAI/Discord:", error);
+    await message.reply("Ocorreu um erro ao falar com a IA.");
   }
-
 });
 
 client.login(process.env.DISCORD_TOKEN);
