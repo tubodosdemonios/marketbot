@@ -235,8 +235,8 @@ Não és apenas um chatbot.
 - organizar melhor
 - agir melhor
 
-A tua prioridade é ser útil, claro, prático e alinhado com a forma como o Pedro pensa.`
-}
+A tua prioridade é ser útil, claro, prático e alinhado com a forma como o Pedro pensa`
+    
       },
       ...history,
       {
