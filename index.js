@@ -1,5 +1,7 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const OpenAI = require("openai");
+const fs = require("fs");
+const path = require("path");
 
 const client = new Client({
   intents: [
@@ -13,9 +15,61 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Memória curta por canal
 const conversationMemory = new Map();
 const MAX_HISTORY = 12;
+
+const projectsPath = path.join(__dirname, "data", "projects.json");
+
+function loadProjects() {
+  try {
+    const raw = fs.readFileSync(projectsPath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return { projects: [] };
+  }
+}
+
+function saveProjects(data) {
+  fs.writeFileSync(projectsPath, JSON.stringify(data, null, 2), "utf8");
+}
+
+function getProject(data, name) {
+  return data.projects.find(
+    (p) => p.name.toLowerCase() === name.toLowerCase()
+  );
+}
+
+function getProjectsAsPrompt(data) {
+  if (!data.projects.length) {
+    return "Não existem projetos registados.";
+  }
+
+  return data.projects
+    .map((project) => {
+      const pending = project.pending?.length
+        ? project.pending.map((t) => `- ${t}`).join("\n")
+        : "- sem pendentes";
+
+      const done = project.done?.length
+        ? project.done.map((t) => `- ${t}`).join("\n")
+        : "- sem concluídos";
+
+      const notes = project.notes?.length
+        ? project.notes.map((t) => `- ${t}`).join("\n")
+        : "- sem notas";
+
+      return `Projeto: ${project.name}
+Pendentes:
+${pending}
+
+Concluído:
+${done}
+
+Notas:
+${notes}`;
+    })
+    .join("\n\n");
+}
 
 client.once("ready", () => {
   console.log(`Bot online como ${client.user.tag}`);
@@ -24,22 +78,171 @@ client.once("ready", () => {
 client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
-
-    // Só responde se o bot for mencionado
     if (!message.mentions.has(client.user)) return;
 
     const channelId = message.channel.id;
+    const text = message.content.replace(/<@!?\d+>/g, "").trim();
+    const lower = text.toLowerCase();
 
-    // Remove a menção do texto
-    const userMessage = message.content.replace(/<@!?\d+>/g, "").trim();
-
-    if (!userMessage) {
+    if (!text) {
       await message.reply("Diz-me o que queres que eu faça.");
       return;
     }
 
-    // Buscar histórico do canal
+    const data = loadProjects();
+
+    // ADICIONAR PENDENTE
+    if (lower.includes("no projeto") && lower.includes("falta")) {
+      const match = text.match(/no projeto\s+(.+?)\s+falta\s+(.+)/i);
+
+      if (!match) {
+        await message.reply("Não percebi bem o nome do projeto ou a tarefa.");
+        return;
+      }
+
+      const projectName = match[1].trim();
+      const task = match[2].trim();
+
+      let project = getProject(data, projectName);
+
+      if (!project) {
+        project = {
+          name: projectName,
+          pending: [],
+          done: [],
+          notes: []
+        };
+        data.projects.push(project);
+      }
+
+      if (!project.pending.includes(task)) {
+        project.pending.push(task);
+      }
+
+      saveProjects(data);
+
+      await message.reply(`Registado no projeto **${projectName}**: falta ${task}`);
+      return;
+    }
+
+    // VER PENDENTES
+    if (lower.includes("o que falta fazer no projeto")) {
+      const match = text.match(/o que falta fazer no projeto\s+(.+)\??/i);
+
+      if (!match) {
+        await message.reply("Não percebi qual é o projeto.");
+        return;
+      }
+
+      const projectName = match[1].trim();
+      const project = getProject(data, projectName);
+
+      if (!project) {
+        await message.reply("Não encontrei esse projeto.");
+        return;
+      }
+
+      if (!project.pending.length) {
+        await message.reply(`No projeto **${projectName}** não há tarefas pendentes.`);
+        return;
+      }
+
+      let reply = `No projeto **${projectName}** falta fazer:\n\n`;
+      project.pending.forEach((t, i) => {
+        reply += `${i + 1}. ${t}\n`;
+      });
+
+      await message.reply(reply.trim());
+      return;
+    }
+
+    // MARCAR COMO FEITO
+    if (lower.includes("no projeto") && lower.includes("já está feito")) {
+      const match = text.match(/no projeto\s+(.+?)\s+já está feito\s+(.+)/i);
+
+      if (!match) {
+        await message.reply("Não percebi bem o projeto ou a tarefa concluída.");
+        return;
+      }
+
+      const projectName = match[1].trim();
+      const task = match[2].trim();
+
+      const project = getProject(data, projectName);
+
+      if (!project) {
+        await message.reply("Projeto não encontrado.");
+        return;
+      }
+
+      project.pending = project.pending.filter(
+        (t) => t.toLowerCase() !== task.toLowerCase()
+      );
+
+      if (!project.done.includes(task)) {
+        project.done.push(task);
+      }
+
+      saveProjects(data);
+
+      await message.reply(`Atualizado. No projeto **${projectName}** já está feito: ${task}`);
+      return;
+    }
+
+    // RESUMO
+    if (lower.includes("resumo do projeto")) {
+      const match = text.match(/resumo do projeto\s+(.+)/i);
+
+      if (!match) {
+        await message.reply("Não percebi qual é o projeto.");
+        return;
+      }
+
+      const projectName = match[1].trim();
+      const project = getProject(data, projectName);
+
+      if (!project) {
+        await message.reply("Projeto não encontrado.");
+        return;
+      }
+
+      let reply = `Resumo do projeto **${projectName}**\n\n`;
+
+      reply += `Pendentes:\n`;
+      if (!project.pending.length) {
+        reply += "nenhum\n";
+      } else {
+        project.pending.forEach((t, i) => {
+          reply += `${i + 1}. ${t}\n`;
+        });
+      }
+
+      reply += `\nConcluído:\n`;
+      if (!project.done.length) {
+        reply += "nenhum\n";
+      } else {
+        project.done.forEach((t, i) => {
+          reply += `${i + 1}. ${t}\n`;
+        });
+      }
+
+      reply += `\nNotas:\n`;
+      if (!project.notes.length) {
+        reply += "nenhuma";
+      } else {
+        project.notes.forEach((t, i) => {
+          reply += `${i + 1}. ${t}\n`;
+        });
+      }
+
+      await message.reply(reply.trim());
+      return;
+    }
+
+    // CONVERSA NORMAL COM IA
     let history = conversationMemory.get(channelId) || [];
+
+    const projectsContext = getProjectsAsPrompt(data);
 
     const messagesForOpenAI = [
       {
@@ -48,7 +251,7 @@ client.on("messageCreate", async (message) => {
 
 Responde sempre em português de Portugal.
 
-O teu papel não é apenas responder perguntas. O teu papel é ajudar o Pedro a pensar melhor, estruturar ideias, explorar oportunidades, clarificar decisões e transformar pensamento em ação.
+O teu papel não é apenas responder perguntas. O teu papel é ajudar o Pedro a pensar melhor, estruturar ideias, explorar oportunidades, clarificar decisões, organizar projetos e transformar pensamento em ação.
 
 Tu funcionas como uma extensão do pensamento do Pedro.
 
@@ -114,6 +317,7 @@ Antes de responder, identifica internamente qual é a situação:
 - tentar decidir
 - organizar algo
 - pedir próximos passos
+- gerir um projeto
 
 2. Decide qual é a resposta mais útil:
 - estruturar
@@ -122,6 +326,7 @@ Antes de responder, identifica internamente qual é a situação:
 - comparar
 - priorizar
 - transformar em plano
+- clarificar pendentes
 
 3. Dá prioridade ao que mais ajuda neste momento:
 - clareza
@@ -146,6 +351,8 @@ Ajuda o Pedro a:
 • comparar caminhos possíveis
 • clarificar decisões
 • transformar ideias em planos simples
+• organizar projetos em andamento
+• perceber o que falta fazer
 
 Quando ele apresenta uma ideia:
 - organiza a ideia
@@ -169,6 +376,11 @@ Quando ele está indeciso:
 - reduz a confusão
 - separa o importante do acessório
 - ajuda-o a ver os trade-offs
+
+Quando o tema envolve projetos:
+- usa o contexto operacional disponível
+- considera pendentes, concluídos e notas
+- ajuda a clarificar próximos passos
 
 ────────────────
 
@@ -210,6 +422,12 @@ qual faz mais sentido e porquê
 
 ────────────────
 
+CONTEXTO OPERACIONAL DOS PROJETOS
+
+${projectsContext}
+
+────────────────
+
 REGRAS IMPORTANTES
 
 - Mantém continuidade com base na conversa recente.
@@ -235,14 +453,10 @@ Não és apenas um chatbot.
 - organizar melhor
 - agir melhor
 
-A tua prioridade é ser útil, claro, prático e alinhado com a forma como o Pedro pensa`
-    
+A tua prioridade é ser útil, claro, prático e alinhado com a forma como o Pedro pensa.`
       },
       ...history,
-      {
-        role: "user",
-        content: userMessage
-      }
+      { role: "user", content: text }
     ];
 
     const completion = await openai.chat.completions.create({
@@ -255,11 +469,9 @@ A tua prioridade é ser útil, claro, prático e alinhado com a forma como o Ped
 
     await message.reply(reply);
 
-    // Guardar histórico atualizado
-    history.push({ role: "user", content: userMessage });
+    history.push({ role: "user", content: text });
     history.push({ role: "assistant", content: reply });
 
-    // Limitar tamanho do histórico
     if (history.length > MAX_HISTORY) {
       history = history.slice(-MAX_HISTORY);
     }
@@ -274,7 +486,7 @@ A tua prioridade é ser útil, claro, prático e alinhado com a forma como o Ped
       return;
     }
 
-    await message.reply("Ocorreu um erro ao falar com a IA.");
+    await message.reply("Ocorreu um erro.");
   }
 });
 
