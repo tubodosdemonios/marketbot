@@ -39,6 +39,23 @@ function getProject(data, name) {
   );
 }
 
+function getOrCreateProject(data, name) {
+  let project = getProject(data, name);
+
+  if (!project) {
+    project = {
+      name,
+      priority: "não definida",
+      pending: [],
+      done: [],
+      notes: []
+    };
+    data.projects.push(project);
+  }
+
+  return project;
+}
+
 function getProjectsAsPrompt(data) {
   if (!data.projects.length) {
     return "Não existem projetos registados.";
@@ -59,6 +76,8 @@ function getProjectsAsPrompt(data) {
         : "- sem notas";
 
       return `Projeto: ${project.name}
+Prioridade: ${project.priority || "não definida"}
+
 Pendentes:
 ${pending}
 
@@ -69,6 +88,12 @@ Notas:
 ${notes}`;
     })
     .join("\n\n");
+}
+
+function uniquePush(array, value) {
+  if (!array.some((item) => item.toLowerCase() === value.toLowerCase())) {
+    array.push(value);
+  }
 }
 
 client.once("ready", () => {
@@ -92,156 +117,230 @@ client.on("messageCreate", async (message) => {
     const data = loadProjects();
 
     // ADICIONAR PENDENTE
-    if (lower.includes("no projeto") && lower.includes("falta")) {
-      const match = text.match(/no projeto\s+(.+?)\s+falta\s+(.+)/i);
+    {
+      const match = text.match(/no projeto\s+(.+?)\s+falta(?:\s+fazer)?\s+(.+)/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const task = match[2].trim();
 
-      if (!match) {
-        await message.reply("Não percebi bem o nome do projeto ou a tarefa.");
+        const project = getOrCreateProject(data, projectName);
+        uniquePush(project.pending, task);
+
+        saveProjects(data);
+
+        await message.reply(`Registado no projeto **${projectName}**: falta ${task}`);
         return;
       }
-
-      const projectName = match[1].trim();
-      const task = match[2].trim();
-
-      let project = getProject(data, projectName);
-
-      if (!project) {
-        project = {
-          name: projectName,
-          pending: [],
-          done: [],
-          notes: []
-        };
-        data.projects.push(project);
-      }
-
-      if (!project.pending.includes(task)) {
-        project.pending.push(task);
-      }
-
-      saveProjects(data);
-
-      await message.reply(`Registado no projeto **${projectName}**: falta ${task}`);
-      return;
     }
 
     // VER PENDENTES
-    if (lower.includes("o que falta fazer no projeto")) {
-      const match = text.match(/o que falta fazer no projeto\s+(.+)\??/i);
+    {
+      const match = text.match(/o que falta fazer no projeto\s+(.+?)\??$/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const project = getProject(data, projectName);
 
-      if (!match) {
-        await message.reply("Não percebi qual é o projeto.");
-        return;
-      }
+        if (!project) {
+          await message.reply("Não encontrei esse projeto.");
+          return;
+        }
 
-      const projectName = match[1].trim();
-      const project = getProject(data, projectName);
+        if (!project.pending.length) {
+          await message.reply(`No projeto **${projectName}** não há tarefas pendentes.`);
+          return;
+        }
 
-      if (!project) {
-        await message.reply("Não encontrei esse projeto.");
-        return;
-      }
-
-      if (!project.pending.length) {
-        await message.reply(`No projeto **${projectName}** não há tarefas pendentes.`);
-        return;
-      }
-
-      let reply = `No projeto **${projectName}** falta fazer:\n\n`;
-      project.pending.forEach((t, i) => {
-        reply += `${i + 1}. ${t}\n`;
-      });
-
-      await message.reply(reply.trim());
-      return;
-    }
-
-    // MARCAR COMO FEITO
-    if (lower.includes("no projeto") && lower.includes("já está feito")) {
-      const match = text.match(/no projeto\s+(.+?)\s+já está feito\s+(.+)/i);
-
-      if (!match) {
-        await message.reply("Não percebi bem o projeto ou a tarefa concluída.");
-        return;
-      }
-
-      const projectName = match[1].trim();
-      const task = match[2].trim();
-
-      const project = getProject(data, projectName);
-
-      if (!project) {
-        await message.reply("Projeto não encontrado.");
-        return;
-      }
-
-      project.pending = project.pending.filter(
-        (t) => t.toLowerCase() !== task.toLowerCase()
-      );
-
-      if (!project.done.includes(task)) {
-        project.done.push(task);
-      }
-
-      saveProjects(data);
-
-      await message.reply(`Atualizado. No projeto **${projectName}** já está feito: ${task}`);
-      return;
-    }
-
-    // RESUMO
-    if (lower.includes("resumo do projeto")) {
-      const match = text.match(/resumo do projeto\s+(.+)/i);
-
-      if (!match) {
-        await message.reply("Não percebi qual é o projeto.");
-        return;
-      }
-
-      const projectName = match[1].trim();
-      const project = getProject(data, projectName);
-
-      if (!project) {
-        await message.reply("Projeto não encontrado.");
-        return;
-      }
-
-      let reply = `Resumo do projeto **${projectName}**\n\n`;
-
-      reply += `Pendentes:\n`;
-      if (!project.pending.length) {
-        reply += "nenhum\n";
-      } else {
+        let reply = `No projeto **${projectName}** falta fazer:\n\n`;
         project.pending.forEach((t, i) => {
           reply += `${i + 1}. ${t}\n`;
         });
-      }
 
-      reply += `\nConcluído:\n`;
-      if (!project.done.length) {
-        reply += "nenhum\n";
-      } else {
-        project.done.forEach((t, i) => {
-          reply += `${i + 1}. ${t}\n`;
+        await message.reply(reply.trim());
+        return;
+      }
+    }
+
+    // MARCAR COMO FEITO
+    {
+      const match = text.match(/no projeto\s+(.+?)\s+já está feito\s+(.+)/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const task = match[2].trim();
+
+        const project = getProject(data, projectName);
+
+        if (!project) {
+          await message.reply("Projeto não encontrado.");
+          return;
+        }
+
+        project.pending = project.pending.filter(
+          (t) => t.toLowerCase() !== task.toLowerCase()
+        );
+        uniquePush(project.done, task);
+
+        saveProjects(data);
+
+        await message.reply(`Atualizado. No projeto **${projectName}** já está feito: ${task}`);
+        return;
+      }
+    }
+
+    // RESUMO DO PROJETO
+    {
+      const match = text.match(/resumo do projeto\s+(.+)/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const project = getProject(data, projectName);
+
+        if (!project) {
+          await message.reply("Projeto não encontrado.");
+          return;
+        }
+
+        let reply = `Resumo do projeto **${projectName}**\n\n`;
+
+        reply += `Prioridade: ${project.priority || "não definida"}\n\n`;
+
+        reply += `Pendentes:\n`;
+        if (!project.pending.length) {
+          reply += "nenhum\n";
+        } else {
+          project.pending.forEach((t, i) => {
+            reply += `${i + 1}. ${t}\n`;
+          });
+        }
+
+        reply += `\nConcluído:\n`;
+        if (!project.done.length) {
+          reply += "nenhum\n";
+        } else {
+          project.done.forEach((t, i) => {
+            reply += `${i + 1}. ${t}\n`;
+          });
+        }
+
+        reply += `\nNotas:\n`;
+        if (!project.notes.length) {
+          reply += "nenhuma";
+        } else {
+          project.notes.forEach((t, i) => {
+            reply += `${i + 1}. ${t}\n`;
+          });
+        }
+
+        await message.reply(reply.trim());
+        return;
+      }
+    }
+
+    // ADICIONAR NOTA
+    {
+      const match = text.match(/adiciona uma nota ao projeto\s+(.+?):\s*(.+)/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const note = match[2].trim();
+
+        const project = getOrCreateProject(data, projectName);
+        uniquePush(project.notes, note);
+
+        saveProjects(data);
+
+        await message.reply(`Nota adicionada ao projeto **${projectName}**.`);
+        return;
+      }
+    }
+
+    // MOSTRAR NOTAS
+    {
+      const match = text.match(/mostra as notas do projeto\s+(.+?)\??$/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const project = getProject(data, projectName);
+
+        if (!project) {
+          await message.reply("Projeto não encontrado.");
+          return;
+        }
+
+        if (!project.notes.length) {
+          await message.reply(`O projeto **${projectName}** não tem notas.`);
+          return;
+        }
+
+        let reply = `Notas do projeto **${projectName}**:\n\n`;
+        project.notes.forEach((note, i) => {
+          reply += `${i + 1}. ${note}\n`;
         });
-      }
 
-      reply += `\nNotas:\n`;
-      if (!project.notes.length) {
-        reply += "nenhuma";
-      } else {
-        project.notes.forEach((t, i) => {
-          reply += `${i + 1}. ${t}\n`;
+        await message.reply(reply.trim());
+        return;
+      }
+    }
+
+    // VER CONCLUÍDOS
+    {
+      const match = text.match(/o que já foi feito no projeto\s+(.+?)\??$/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const project = getProject(data, projectName);
+
+        if (!project) {
+          await message.reply("Projeto não encontrado.");
+          return;
+        }
+
+        if (!project.done.length) {
+          await message.reply(`No projeto **${projectName}** ainda não há nada marcado como concluído.`);
+          return;
+        }
+
+        let reply = `No projeto **${projectName}** já foi feito:\n\n`;
+        project.done.forEach((item, i) => {
+          reply += `${i + 1}. ${item}\n`;
         });
-      }
 
-      await message.reply(reply.trim());
-      return;
+        await message.reply(reply.trim());
+        return;
+      }
+    }
+
+    // DEFINIR PRIORIDADE
+    {
+      const match = text.match(/a prioridade do projeto\s+(.+?)\s+é\s+(.+)/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const priority = match[2].trim();
+
+        const project = getOrCreateProject(data, projectName);
+        project.priority = priority;
+
+        saveProjects(data);
+
+        await message.reply(`Defini a prioridade do projeto **${projectName}** como **${priority}**.`);
+        return;
+      }
+    }
+
+    // VER PRIORIDADE
+    {
+      const match = text.match(/qual é a prioridade do projeto\s+(.+?)\??$/i);
+      if (match) {
+        const projectName = match[1].trim();
+        const project = getProject(data, projectName);
+
+        if (!project) {
+          await message.reply("Projeto não encontrado.");
+          return;
+        }
+
+        await message.reply(`A prioridade do projeto **${projectName}** é **${project.priority || "não definida"}**.`);
+        return;
+      }
     }
 
     // CONVERSA NORMAL COM IA
     let history = conversationMemory.get(channelId) || [];
-
     const projectsContext = getProjectsAsPrompt(data);
 
     const messagesForOpenAI = [
@@ -379,7 +478,7 @@ Quando ele está indeciso:
 
 Quando o tema envolve projetos:
 - usa o contexto operacional disponível
-- considera pendentes, concluídos e notas
+- considera pendentes, concluídos, notas e prioridade
 - ajuda a clarificar próximos passos
 
 ────────────────
@@ -456,7 +555,10 @@ Não és apenas um chatbot.
 A tua prioridade é ser útil, claro, prático e alinhado com a forma como o Pedro pensa.`
       },
       ...history,
-      { role: "user", content: text }
+      {
+        role: "user",
+        content: text
+      }
     ];
 
     const completion = await openai.chat.completions.create({
